@@ -1,0 +1,411 @@
+<!DOCTYPE html>
+<html lang="uk" data-bs-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>ОПЕРАТОР | GIS Ops Pro</title>
+    
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+
+    <style>
+        :root { --sidebar-width: 400px; }
+        body { height: 100vh; overflow: hidden; }
+        .wrapper { display: flex; height: 100%; position: relative; }
+
+        /* Sidebar */
+        .sidebar { 
+            width: var(--sidebar-width); background-color: var(--bs-body-bg); 
+            border-right: 1px solid var(--bs-border-color); z-index: 2000; 
+            display: flex; flex-direction: column; transition: transform 0.3s;
+        }
+        
+        /* Map */
+        .map-container { flex-grow: 1; position: relative; width: 100%; height: 100%; }
+        #map { height: 100%; width: 100%; background: #222; z-index: 1; }
+
+        /* Mobile */
+        @media (max-width: 768px) {
+            .sidebar {
+                position: absolute; top: 0; left: 0; height: 100%; width: 90%;
+                transform: translateX(-100%); box-shadow: 5px 0 15px rgba(0,0,0,0.3);
+            }
+            .sidebar.active { transform: translateX(0); }
+            .mobile-toggle { display: block !important; }
+            .overlay {
+                position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+                background: rgba(0,0,0,0.5); z-index: 1999; opacity: 0; pointer-events: none; transition: 0.3s;
+            }
+            .overlay.active { opacity: 1; pointer-events: auto; }
+        }
+        .mobile-toggle { display: none; position: absolute; top: 15px; left: 15px; z-index: 1000; width: 45px; height: 45px; border-radius: 50%; }
+
+        /* Locate Button */
+        .locate-btn {
+            position: absolute; bottom: 20px; right: 20px; z-index: 1000;
+            width: 40px; height: 40px; border-radius: 4px; background: white; border: 2px solid rgba(0,0,0,0.2);
+            display: flex; align-items: center; justify-content: center; cursor: pointer;
+        }
+        .locate-btn:hover { background: #f4f4f4; }
+
+        /* Scroll & Cards */
+        .scrollable { overflow-y: auto; flex-grow: 1; padding: 15px; }
+        .incident-card {
+            border: 1px solid var(--bs-border-color); border-radius: 8px; background-color: var(--bs-body-bg); 
+            margin-bottom: 10px; padding: 12px; border-left: 5px solid #ccc; cursor: pointer; transition: 0.2s;
+        }
+        .incident-card:hover { background-color: var(--bs-tertiary-bg); }
+        
+        .border-low { border-left-color: #198754; } .border-medium { border-left-color: #ffc107; }
+        .border-high { border-left-color: #fd7e14; } .border-critical { border-left-color: #dc3545; }
+
+        /* Icons */
+        .custom-div-icon { background: transparent; border: none; }
+        .marker-pin {
+            width: 40px; height: 40px; border-radius: 50% 50% 50% 0; background: #333; position: absolute;
+            transform: rotate(-45deg); left: 50%; top: 50%; margin: -20px 0 0 -20px;
+            display: flex; justify-content: center; align-items: center; box-shadow: 0 3px 5px rgba(0,0,0,0.3);
+        }
+        .marker-pin::after { content: ''; width: 24px; height: 24px; margin: 8px 0 0 8px; background: #fff; position: absolute; border-radius: 50%; }
+        .marker-icon { position: absolute; font-size: 16px; margin-top: -8px; z-index: 10; color: #333; }
+        .pin-low { background: #198754; } .pin-medium { background: #ffc107; }
+        .pin-high { background: #fd7e14; } .pin-critical { background: #dc3545; }
+        .editing-mode { border: 2px solid var(--bs-primary) !important; background-color: var(--bs-primary-bg-subtle) !important; }
+    </style>
+</head>
+<body>
+
+<div class="wrapper">
+    <div class="overlay" id="overlay" onclick="toggleSidebar()"></div>
+
+    <div class="sidebar" id="sidebar">
+        <div class="p-3 border-bottom bg-body-tertiary">
+            <div class="d-flex justify-content-between align-items-center mb-2">
+                <h5 class="m-0 fw-bold"><i class="fa-solid fa-user-pen me-2"></i>ОПЕРАТОР</h5>
+                <div class="d-flex gap-1">
+                    <button class="btn btn-sm btn-outline-primary" onclick="openStats()" title="Аналітика"><i class="fa-solid fa-chart-pie"></i></button>
+                    <button class="btn btn-sm btn-outline-success" onclick="exportCSV()" title="Експорт CSV"><i class="fa-solid fa-file-csv"></i></button>
+                    <button class="btn btn-sm btn-outline-secondary" id="theme-toggle" title="Тема"><i class="fa-solid fa-moon"></i></button>
+                </div>
+            </div>
+            
+            <div class="input-group input-group-sm mb-2">
+                <span class="input-group-text"><i class="fa-solid fa-search"></i></span>
+                <input type="text" class="form-control" id="search-input" placeholder="Пошук...">
+            </div>
+            <div class="d-flex gap-2 mb-2">
+                <input type="date" class="form-control form-control-sm" id="date-from" title="З дати">
+                <input type="date" class="form-control form-control-sm" id="date-to" title="По дату">
+            </div>
+            <div class="d-flex gap-2">
+                <button class="btn btn-sm btn-outline-dark flex-grow-1" onclick="loadIncidents()">Застосувати</button>
+                <button class="btn btn-sm btn-outline-danger" onclick="resetFilters()" title="Скинути фільтри"><i class="fa-solid fa-xmark"></i></button>
+            </div>
+        </div>
+
+        <div class="p-3 border-bottom" id="form-container">
+            <div class="d-flex justify-content-between mb-2">
+                <h6 class="fw-bold text-uppercase small text-body-secondary" id="form-title">Нова подія</h6>
+                <button class="btn btn-sm btn-link text-danger text-decoration-none p-0" id="cancel-edit-btn" style="display: none;" onclick="resetForm()">Скасувати</button>
+            </div>
+            <input type="hidden" id="in-id">
+            <input type="text" class="form-control form-control-sm mb-2" id="in-title" placeholder="Назва події">
+            <div class="row g-2 mb-2">
+                <div class="col-6"><input type="number" step="any" class="form-control form-control-sm" id="in-lat" placeholder="Lat"></div>
+                <div class="col-6"><input type="number" step="any" class="form-control form-control-sm" id="in-lon" placeholder="Lon"></div>
+            </div>
+            <div class="row g-2 mb-2">
+                <div class="col-6">
+                    <select class="form-select form-select-sm" id="in-category">
+                        <option value="fire">🔥 Пожежа</option>
+                        <option value="dtp">🚗 ДТП</option>
+                        <option value="police">👮 Поліція</option>
+                        <option value="medical">🚑 Медицина</option>
+                        <option value="military">💣 Військове</option>
+                        <option value="other">📌 Інше</option>
+                    </select>
+                </div>
+                <div class="col-6">
+                    <select class="form-select form-select-sm" id="in-severity">
+                        <option value="low">🟢 Низький</option>
+                        <option value="medium" selected>🟡 Середній</option>
+                        <option value="high">🟠 Високий</option>
+                        <option value="critical">🔴 Критичний</option>
+                    </select>
+                </div>
+            </div>
+            <textarea class="form-control form-control-sm mb-2" id="in-desc" rows="2" placeholder="Опис..."></textarea>
+            <button class="btn btn-primary btn-sm w-100" id="submit-btn"><i class="fa-solid fa-plus me-1"></i> Додати</button>
+        </div>
+
+        <div class="scrollable" id="incident-list"></div>
+    </div>
+
+    <div class="map-container">
+        <button class="btn btn-light mobile-toggle" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
+        <div id="map"></div>
+        <div class="locate-btn leaflet-bar" onclick="locateUser()"><i class="fa-solid fa-crosshairs text-dark"></i></div>
+    </div>
+</div>
+
+<div class="modal fade" id="statsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">Аналітика за обраний період</h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-6 text-center">
+                        <h6>По категоріям</h6>
+                        <canvas id="catChart"></canvas>
+                    </div>
+                    <div class="col-md-6 text-center">
+                        <h6>По рівню загрози</h6>
+                        <canvas id="sevChart"></canvas>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+<script>
+    const API_BASE = "http://127.0.0.1:8000/api";
+    let map, markersCluster, tileLayer, tempMarker, currentIncidents = [];
+    const categoryIcons = {'fire':'fa-fire','dtp':'fa-car-burst','police':'fa-shield','medical':'fa-truck-medical','military':'fa-bomb','other':'fa-circle-info'};
+    const severityNames = {'low':'Низький', 'medium':'Середній', 'high':'Високий', 'critical':'Критичний'};
+    const TILES = { light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' };
+
+    // --- UI LOGIC ---
+    function toggleSidebar() { document.getElementById('sidebar').classList.toggle('active'); document.getElementById('overlay').classList.toggle('active'); }
+    
+    function initTheme() {
+        const savedTheme = localStorage.getItem('theme') || 'light';
+        setTheme(savedTheme);
+        document.getElementById('theme-toggle').addEventListener('click', () => {
+            setTheme(document.documentElement.getAttribute('data-bs-theme') === 'light' ? 'dark' : 'light');
+        });
+    }
+    function setTheme(theme) {
+        document.documentElement.setAttribute('data-bs-theme', theme);
+        localStorage.setItem('theme', theme);
+        document.querySelector('#theme-toggle i').className = theme === 'dark' ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
+        if (tileLayer) tileLayer.setUrl(TILES[theme]);
+    }
+
+    // --- MAP LOGIC ---
+    function initMap() {
+        map = L.map('map', { zoomControl: false }).setView([50.4501, 30.5234], 11);
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+        tileLayer = L.tileLayer(TILES[localStorage.getItem('theme') || 'light'], { maxZoom: 20 }).addTo(map);
+        markersCluster = L.markerClusterGroup();
+        map.addLayer(markersCluster);
+
+        map.on('click', function(e) {
+            document.getElementById('in-lat').value = e.latlng.lat.toFixed(6);
+            document.getElementById('in-lon').value = e.latlng.lng.toFixed(6);
+            if (tempMarker) map.removeLayer(tempMarker);
+            tempMarker = L.marker(e.latlng, {opacity: 0.6}).addTo(map);
+            if (window.innerWidth <= 768 && !document.getElementById('sidebar').classList.contains('active')) toggleSidebar();
+        });
+    }
+
+    function createCustomIcon(category, severity) {
+        return L.divIcon({ className: 'custom-div-icon', html: `<div class="marker-pin pin-${severity||'medium'}"></div><i class="fa-solid ${categoryIcons[category]} marker-icon"></i>`, iconSize: [30, 42], iconAnchor: [15, 42], popupAnchor: [0, -35] });
+    }
+
+    function locateUser() {
+        map.locate({setView: true, maxZoom: 16});
+        map.on('locationfound', (e) => {
+            L.circle(e.latlng, {radius: e.accuracy/2, color: 'blue', fillOpacity: 0.1}).addTo(map);
+        });
+    }
+
+    // --- DATA LOGIC ---
+    async function loadIncidents() {
+        const search = document.getElementById('search-input').value;
+        const dateFrom = document.getElementById('date-from').value;
+        const dateTo = document.getElementById('date-to').value;
+
+        const params = new URLSearchParams();
+        if(search) params.append('q', search);
+        if(dateFrom) params.append('start_date', dateFrom);
+        if(dateTo) params.append('end_date', dateTo);
+
+        try {
+            const res = await fetch(`${API_BASE}/incidents?${params.toString()}`);
+            currentIncidents = await res.json();
+            renderIncidents(currentIncidents);
+        } catch (e) { console.error(e); }
+    }
+
+    // ФУНКЦІЯ СКИДАННЯ ФІЛЬТРІВ
+    function resetFilters() {
+        document.getElementById('search-input').value = '';
+        document.getElementById('date-from').value = '';
+        document.getElementById('date-to').value = '';
+        loadIncidents(); // Перезавантажити всі дані
+    }
+
+    function renderIncidents(incidents) {
+        markersCluster.clearLayers();
+        const list = document.getElementById('incident-list');
+        list.innerHTML = '';
+        
+        if(incidents.length === 0) {
+            list.innerHTML = '<div class="text-center text-muted mt-5">Подій не знайдено</div>';
+            return;
+        }
+
+        incidents.forEach(inc => {
+            const marker = L.marker([inc.latitude, inc.longitude], { icon: createCustomIcon(inc.category, inc.severity) });
+            marker.bindPopup(`<div style="color:#333"><b>${inc.title}</b><br>${inc.description||''}</div>`);
+            markersCluster.addLayer(marker);
+
+            const card = document.createElement('div');
+            card.className = `incident-card border-${inc.severity}`;
+            card.innerHTML = `
+                <div class="d-flex justify-content-between align-items-start"><span class="fw-bold">${inc.title}</span><span class="badge border text-body">${severityNames[inc.severity]}</span></div>
+                <div class="small text-body-secondary mt-1"><i class="fa-solid ${categoryIcons[inc.category]}"></i> ${inc.category} • ${new Date(inc.created_at).toLocaleDateString()}</div>
+                <div class="d-flex justify-content-end gap-2 mt-2">
+                    <button class="btn btn-sm btn-outline-primary py-0 px-2" onclick="startEdit(${inc.id})"><i class="fa-solid fa-pen"></i></button>
+                    <button class="btn btn-sm btn-outline-danger py-0 px-2" onclick="deleteIncident(${inc.id})"><i class="fa-solid fa-trash"></i></button>
+                </div>`;
+            card.onclick = (e) => {
+                if (e.target.closest('button')) return;
+                map.flyTo([inc.latitude, inc.longitude], 14);
+                markersCluster.zoomToShowLayer(marker, () => marker.openPopup());
+                if (window.innerWidth <= 768) toggleSidebar();
+            };
+            list.appendChild(card);
+        });
+    }
+
+    // --- ACTIONS ---
+    function startEdit(id) {
+        const inc = currentIncidents.find(i => i.id === id);
+        if(!inc) return;
+        document.getElementById('in-id').value = inc.id;
+        document.getElementById('in-title').value = inc.title;
+        document.getElementById('in-desc').value = inc.description;
+        document.getElementById('in-lat').value = inc.latitude;
+        document.getElementById('in-lon').value = inc.longitude;
+        document.getElementById('in-category').value = inc.category;
+        document.getElementById('in-severity').value = inc.severity;
+        
+        document.getElementById('form-title').innerText = "Редагування";
+        document.getElementById('cancel-edit-btn').style.display = 'block';
+        document.getElementById('form-container').classList.add('editing-mode');
+        document.getElementById('submit-btn').innerHTML = '<i class="fa-solid fa-save me-1"></i> Зберегти';
+        document.getElementById('submit-btn').className = 'btn btn-warning btn-sm w-100 text-dark';
+        if (window.innerWidth <= 768) document.getElementById('form-container').scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function resetForm() {
+        document.getElementById('in-id').value = ''; document.getElementById('in-title').value = ''; document.getElementById('in-desc').value = '';
+        document.getElementById('in-lat').value = ''; document.getElementById('in-lon').value = '';
+        document.getElementById('form-title').innerText = "Нова подія";
+        document.getElementById('cancel-edit-btn').style.display = 'none';
+        document.getElementById('form-container').classList.remove('editing-mode');
+        document.getElementById('submit-btn').innerHTML = '<i class="fa-solid fa-plus me-1"></i> Додати';
+        document.getElementById('submit-btn').className = 'btn btn-primary btn-sm w-100';
+        if (tempMarker) map.removeLayer(tempMarker);
+    }
+
+    async function handleSubmit() {
+        const id = document.getElementById('in-id').value;
+        const payload = {
+            title: document.getElementById('in-title').value, description: document.getElementById('in-desc').value,
+            category: document.getElementById('in-category').value, severity: document.getElementById('in-severity').value,
+            latitude: parseFloat(document.getElementById('in-lat').value), longitude: parseFloat(document.getElementById('in-lon').value), status: "open"
+        };
+        if (!payload.title || isNaN(payload.latitude)) { alert("Заповніть дані!"); return; }
+        let url = `${API_BASE}/incidents` + (id ? `/${id}` : '');
+        await fetch(url, { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+        resetForm(); loadIncidents();
+        if (window.innerWidth <= 768) toggleSidebar();
+    }
+
+    async function deleteIncident(id) {
+        if(confirm('Видалити?')) { await fetch(`${API_BASE}/incidents/${id}`, { method: 'DELETE' }); loadIncidents(); }
+    }
+
+    // --- CSV EXPORT FIX ---
+   // --- CSV EXPORT FIX (Excel friendly) ---
+    function exportCSV() {
+        if (currentIncidents.length === 0) return alert("Немає даних для експорту");
+        
+        const BOM = "\uFEFF";
+        // 1. Використовуємо крапку з комою (;) замість коми (,) як роздільник
+        let csvContent = BOM + "ID;Title;Category;Severity;Date;Lat;Lon\n";
+        
+        currentIncidents.forEach(row => {
+            const date = new Date(row.created_at).toISOString().split('T')[0];
+            // Обробка лапок у назві
+            const title = row.title ? `"${row.title.replace(/"/g, '""')}"` : "";
+            
+            // 2. Формуємо рядок через крапку з комою
+            // Важливо: Lat/Lon повинні бути з крапкою (50.45), Excel це зрозуміє як число або текст, 
+            // але головне, що воно не розіб'є стовпчик.
+            csvContent += `${row.id};${title};${row.category};${row.severity};${date};${row.latitude};${row.longitude}\n`;
+        });
+
+        const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+        const link = document.createElement("a");
+        const url = URL.createObjectURL(blob);
+        link.setAttribute("href", url);
+        link.setAttribute("download", `incidents_export_${new Date().toISOString().slice(0,10)}.csv`);
+        link.style.visibility = 'hidden';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    }
+    
+
+    // --- ANALYTICS ---
+    let catChartInstance, sevChartInstance;
+    function openStats() {
+        const modal = new bootstrap.Modal(document.getElementById('statsModal'));
+        modal.show();
+        const catCounts = {};
+        const sevCounts = {};
+        currentIncidents.forEach(i => {
+            catCounts[i.category] = (catCounts[i.category] || 0) + 1;
+            sevCounts[i.severity] = (sevCounts[i.severity] || 0) + 1;
+        });
+        if (catChartInstance) catChartInstance.destroy();
+        if (sevChartInstance) sevChartInstance.destroy();
+        catChartInstance = new Chart(document.getElementById('catChart'), {
+            type: 'pie',
+            data: {
+                labels: Object.keys(catCounts),
+                datasets: [{ data: Object.values(catCounts), backgroundColor: ['#ff6384', '#36a2eb', '#cc65fe', '#ffce56', '#4bc0c0'] }]
+            }
+        });
+        sevChartInstance = new Chart(document.getElementById('sevChart'), {
+            type: 'bar',
+            data: {
+                labels: Object.keys(sevCounts),
+                datasets: [{ label: 'Кількість', data: Object.values(sevCounts), backgroundColor: ['#198754', '#ffc107', '#fd7e14', '#dc3545'] }]
+            }
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        initTheme(); initMap(); loadIncidents();
+        document.getElementById('submit-btn').addEventListener('click', handleSubmit);
+        document.getElementById('search-input').addEventListener('keypress', function (e) { if (e.key === 'Enter') loadIncidents(); });
+    });
+</script>
+</body>
+</html>

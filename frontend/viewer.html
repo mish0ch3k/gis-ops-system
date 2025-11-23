@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="uk" data-bs-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>МОНІТОР | Ситуаційний Центр</title>
+    
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css" />
+    
+    <style>
+        :root { --sidebar-width: 350px; }
+        body { height: 100vh; overflow: hidden; }
+        .wrapper { display: flex; height: 100%; position: relative; }
+        
+        .sidebar { 
+            width: var(--sidebar-width); 
+            background-color: var(--bs-body-bg); 
+            border-right: 1px solid var(--bs-border-color);
+            display: flex; flex-direction: column; transition: 0.3s; z-index: 2000;
+        }
+
+        .map-container { flex-grow: 1; width: 100%; height: 100%; }
+        #map { height: 100%; width: 100%; background: #222; }
+        
+        /* MOBILE ADAPTATION */
+        @media (max-width: 768px) {
+            .sidebar {
+                position: absolute; top: 0; left: 0; height: 100%; width: 85%;
+                transform: translateX(-100%); box-shadow: 5px 0 15px rgba(0,0,0,0.5);
+            }
+            .sidebar.active { transform: translateX(0); }
+            .mobile-toggle { display: block !important; }
+            .overlay {
+                position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+                background: rgba(0,0,0,0.5); z-index: 1999;
+                opacity: 0; pointer-events: none; transition: opacity 0.3s;
+            }
+            .overlay.active { opacity: 1; pointer-events: auto; }
+        }
+
+        .mobile-toggle {
+            display: none; position: absolute; top: 15px; left: 15px; z-index: 1000;
+            width: 45px; height: 45px; border-radius: 50%; box-shadow: 0 2px 5px rgba(0,0,0,0.3);
+        }
+
+        .scrollable { overflow-y: auto; flex-grow: 1; padding: 15px; }
+        .incident-card {
+            background-color: var(--bs-tertiary-bg); border: 1px solid var(--bs-border-color);
+            border-radius: 8px; margin-bottom: 15px; padding: 15px; 
+            border-left: 5px solid transparent; cursor: pointer; transition: 0.2s;
+        }
+        .incident-card:hover { background-color: var(--bs-secondary-bg); transform: translateX(3px); }
+
+        .border-low { border-left-color: #198754; } .border-medium { border-left-color: #ffc107; }
+        .border-high { border-left-color: #fd7e14; } .border-critical { border-left-color: #dc3545; }
+
+        .custom-div-icon { background: transparent; border: none; }
+        .marker-pin {
+            width: 40px; height: 40px; border-radius: 50% 50% 50% 0; 
+            background: #333; position: absolute; transform: rotate(-45deg); left: 50%; top: 50%; margin: -20px 0 0 -20px;
+            display: flex; justify-content: center; align-items: center; box-shadow: 0 0 0 2px rgba(255,255,255,0.5);
+        }
+        .marker-pin::after { content: ''; width: 24px; height: 24px; margin: 8px 0 0 8px; background: #fff; position: absolute; border-radius: 50%; }
+        .marker-icon { position: absolute; font-size: 16px; margin-top: -8px; z-index: 10; color: #333; }
+        .pin-low { background: #198754; } .pin-medium { background: #ffc107; } .pin-high { background: #fd7e14; } .pin-critical { background: #dc3545; }
+    </style>
+</head>
+<body>
+
+<div class="wrapper">
+    <div class="overlay" id="overlay" onclick="toggleSidebar()"></div>
+
+    <div class="sidebar" id="sidebar">
+        <div class="p-3 border-bottom d-flex justify-content-between align-items-center bg-body-tertiary">
+            <h5 class="m-0 fw-bold"><i class="fa-solid fa-desktop me-2"></i>МОНІТОР</h5>
+            <div class="d-flex align-items-center gap-2">
+                <div id="loading-spinner" class="spinner-border spinner-border-sm text-primary" role="status" style="display:none;"></div>
+                <span class="badge bg-primary" id="total-count">0</span>
+                <button class="btn btn-sm btn-outline-secondary ms-2" id="theme-toggle"><i class="fa-solid fa-sun"></i></button>
+                <button class="btn btn-sm btn-close d-md-none ms-2" onclick="toggleSidebar()"></button>
+            </div>
+        </div>
+        <div class="p-3 border-bottom">
+            <select class="form-select form-select-sm" id="filter-severity">
+                <option value="">Всі рівні загрози</option>
+                <option value="critical">🔴 Критичний</option>
+                <option value="high">🟠 Високий</option>
+                <option value="medium">🟡 Середній</option>
+            </select>
+        </div>
+        <div class="scrollable" id="incident-list"></div>
+    </div>
+
+    <div class="map-container">
+        <button class="btn btn-dark mobile-toggle" onclick="toggleSidebar()"><i class="fa-solid fa-bars"></i></button>
+        <div id="map"></div>
+    </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+<script>
+    const API_BASE = "http://127.0.0.1:8000/api";
+    let map, markersCluster, tileLayer, markerById = {};
+    const categoryIcons = {'fire':'fa-fire','dtp':'fa-car-burst','police':'fa-shield','medical':'fa-truck-medical','military':'fa-bomb','other':'fa-circle-info'};
+    const severityLabels = {'low':'Низький','medium':'Середній','high':'Високий','critical':'Критичний'};
+    const TILES = { light: 'https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png', dark: 'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png' };
+
+    function toggleSidebar() {
+        document.getElementById('sidebar').classList.toggle('active');
+        document.getElementById('overlay').classList.toggle('active');
+    }
+
+    function initTheme() {
+        const savedTheme = localStorage.getItem('theme') || 'dark';
+        setTheme(savedTheme);
+        document.getElementById('theme-toggle').addEventListener('click', () => {
+            setTheme(document.documentElement.getAttribute('data-bs-theme') === 'light' ? 'dark' : 'light');
+        });
+    }
+    function setTheme(theme) {
+        document.documentElement.setAttribute('data-bs-theme', theme);
+        localStorage.setItem('theme', theme);
+        document.querySelector('#theme-toggle i').className = theme === 'dark' ? 'fa-solid fa-sun' : 'fa-solid fa-moon';
+        if (tileLayer) tileLayer.setUrl(TILES[theme]);
+    }
+
+    function initMap() {
+        map = L.map('map', { zoomControl: false }).setView([50.4501, 30.5234], 11);
+        L.control.zoom({ position: 'bottomright' }).addTo(map);
+        tileLayer = L.tileLayer(TILES[localStorage.getItem('theme') || 'dark'], { maxZoom: 20 }).addTo(map);
+        markersCluster = L.markerClusterGroup();
+        map.addLayer(markersCluster);
+    }
+
+    function createCustomIcon(category, severity) {
+        return L.divIcon({ className: 'custom-div-icon', html: `<div class="marker-pin pin-${severity||'medium'}"></div><i class="fa-solid ${categoryIcons[category]||'fa-circle'} marker-icon"></i>`, iconSize: [30, 42], iconAnchor: [15, 42], popupAnchor: [0, -35] });
+    }
+
+    async function loadIncidents() {
+        document.getElementById('loading-spinner').style.display = 'block';
+        const severity = document.getElementById('filter-severity').value;
+        const params = severity ? `?severity=${severity}` : '';
+        try {
+            const res = await fetch(`${API_BASE}/incidents${params}`);
+            renderIncidents(await res.json());
+        } catch(e) { console.error(e); } 
+        finally { document.getElementById('loading-spinner').style.display = 'none'; }
+    }
+
+    function renderIncidents(incidents) {
+        markersCluster.clearLayers();
+        const list = document.getElementById('incident-list');
+        list.innerHTML = '';
+        document.getElementById('total-count').innerText = incidents.length;
+
+        incidents.forEach(inc => {
+            const marker = L.marker([inc.latitude, inc.longitude], { icon: createCustomIcon(inc.category, inc.severity) });
+            marker.bindPopup(`<div style="color:#333"><b>${inc.title}</b><br>${inc.description||''}<br><small class="text-muted">${new Date(inc.created_at).toLocaleString('uk-UA')}</small></div>`);
+            markersCluster.addLayer(marker);
+
+            const card = document.createElement('div');
+            card.className = `incident-card border-${inc.severity}`;
+            card.innerHTML = `
+                <div class="d-flex justify-content-between align-items-center mb-1"><strong class="text-body">${inc.title}</strong><i class="fa-solid ${categoryIcons[inc.category]} text-body-secondary"></i></div>
+                <div class="mb-2"><span class="badge border text-body-secondary">${severityLabels[inc.severity]}</span></div>
+                <div class="small text-body-secondary opacity-75 text-truncate">${inc.description||'Без опису'}</div>`;
+            card.onclick = () => { 
+                map.flyTo([inc.latitude, inc.longitude], 15); markersCluster.zoomToShowLayer(marker, () => marker.openPopup()); 
+                if (window.innerWidth <= 768) toggleSidebar(); // Ховаємо меню на телефоні після кліку
+            };
+            list.appendChild(card);
+        });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+        initTheme(); initMap(); loadIncidents();
+        document.getElementById('filter-severity').addEventListener('change', loadIncidents);
+        setInterval(loadIncidents, 30000);
+    });
+</script>
+</body>
+</html>
